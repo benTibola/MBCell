@@ -64,6 +64,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <iomanip>
 
 namespace fluid
 {
@@ -570,6 +571,13 @@ namespace fluid
                                           bool assemble_system);
     void refine_mesh(const unsigned int, const unsigned int);
     void output_results(const unsigned int) const;
+    void append_time_step_row(const unsigned int gmres_itr,
+                              const double gmres_res) const;
+    void append_norm_rows() const;
+    void write_kelly_table(const unsigned int output_index) const;
+    void write_provisional_envelope_table(const unsigned int output_index,
+                                          const unsigned int gmres_itr,
+                                          const double gmres_res) const;
     double viscosity;
     double gamma;
     const unsigned int degree;
@@ -987,6 +995,8 @@ namespace fluid
         refined = false;
         assemble(apply_nonzero_constraints, assemble_system);
         auto state = solve(apply_nonzero_constraints, assemble_system);
+        append_time_step_row(state.first, state.second);
+        append_norm_rows();
         // Note we have to use a non-ghosted vector to do the addition.
         PETScWrappers::MPI::BlockVector tmp;
         tmp.reinit(owned_partitioning, mpi_communicator);
@@ -1131,6 +1141,125 @@ namespace fluid
 
 // @sect3{main function}
 //
+template <int dim>
+void InsIMEX<dim>::append_time_step_row(const unsigned int gmres_itr,
+                                        const double gmres_res) const
+{
+  const bool file_exists = std::ifstream("TIME_STEP_TABLE.csv").good();
+  std::ofstream out("TIME_STEP_TABLE.csv", std::ios::app);
+  if (!file_exists)
+    out << "timestep,time,gmres_iterations,gmres_residual\n";
+  out << time.get_timestep() << ","
+      << std::setprecision(16) << time.current() << ","
+      << gmres_itr << ","
+      << std::setprecision(16) << gmres_res << "\n";
+}
+
+template <int dim>
+void InsIMEX<dim>::append_norm_rows() const
+{
+  const double sol_inc_l2 = solution_increment.l2_norm();
+  const double pres_l2    = present_solution.l2_norm();
+  const double rhs_l2     = system_rhs.l2_norm();
+
+  const double vel_inc_l2 = solution_increment.block(0).l2_norm();
+  const double pr_inc_l2  = solution_increment.block(1).l2_norm();
+  const double vel_pre_l2 = present_solution.block(0).l2_norm();
+  const double pr_pre_l2  = present_solution.block(1).l2_norm();
+  const double vel_rhs_l2 = system_rhs.block(0).l2_norm();
+  const double pr_rhs_l2  = system_rhs.block(1).l2_norm();
+
+  {
+    const bool file_exists = std::ifstream("INCREMENT_NORMS.csv").good();
+    std::ofstream out("INCREMENT_NORMS.csv", std::ios::app);
+    if (!file_exists)
+      out << "timestep,time,solution_increment_l2,present_solution_l2,"
+             "velocity_increment_l2,pressure_increment_l2,"
+             "velocity_present_l2,pressure_present_l2\n";
+    out << time.get_timestep() << ","
+        << std::setprecision(16) << time.current() << ","
+        << sol_inc_l2 << "," << pres_l2 << ","
+        << vel_inc_l2 << "," << pr_inc_l2 << ","
+        << vel_pre_l2 << "," << pr_pre_l2 << "\n";
+  }
+
+  {
+    const bool file_exists = std::ifstream("RHS_NORMS.csv").good();
+    std::ofstream out("RHS_NORMS.csv", std::ios::app);
+    if (!file_exists)
+      out << "timestep,time,system_rhs_l2,velocity_rhs_l2,pressure_rhs_l2\n";
+    out << time.get_timestep() << ","
+        << std::setprecision(16) << time.current() << ","
+        << rhs_l2 << "," << vel_rhs_l2 << "," << pr_rhs_l2 << "\n";
+  }
+}
+
+template <int dim>
+void InsIMEX<dim>::write_kelly_table(const unsigned int output_index) const
+{
+  Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
+  const FEValuesExtractors::Vector velocity(0);
+  KellyErrorEstimator<dim>::estimate(dof_handler,
+                                     face_quad_formula,
+                                     {},
+                                     present_solution,
+                                     estimated_error_per_cell,
+                                     fe.component_mask(velocity));
+
+  std::ofstream out("KELLY_INDICATOR_step" +
+                    Utilities::int_to_string(output_index, 6) + ".csv");
+  out << "cell_index,estimated_error,cell_center_x,cell_center_y,cell_level,boundary_touch_flag\n";
+
+  unsigned int idx = 0;
+  for (auto cell = dof_handler.begin_active(); cell != dof_handler.end(); ++cell, ++idx)
+    if (cell->is_locally_owned())
+      {
+        bool boundary_touch = false;
+        for (unsigned int f = 0; f < GeometryInfo<dim>::faces_per_cell; ++f)
+          if (cell->face(f)->at_boundary())
+            boundary_touch = true;
+
+        out << idx << ","
+            << std::setprecision(16) << estimated_error_per_cell(idx) << ","
+            << cell->center()[0] << ","
+            << cell->center()[1] << ","
+            << cell->level() << ","
+            << (boundary_touch ? 1 : 0) << "\n";
+      }
+}
+
+template <int dim>
+void InsIMEX<dim>::write_provisional_envelope_table(const unsigned int output_index,
+                                                    const unsigned int gmres_itr,
+                                                    const double gmres_res) const
+{
+  Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
+  const FEValuesExtractors::Vector velocity(0);
+  KellyErrorEstimator<dim>::estimate(dof_handler,
+                                     face_quad_formula,
+                                     {},
+                                     present_solution,
+                                     estimated_error_per_cell,
+                                     fe.component_mask(velocity));
+
+  std::ofstream out("PROVISIONAL_ERROR_ENVELOPE_step" +
+                    Utilities::int_to_string(output_index, 6) + ".csv");
+  out << "cell_index,kelly_indicator,global_gmres_residual,global_solution_increment_l2,global_rhs_l2,envelope_note\n";
+
+  const double sol_inc_l2 = solution_increment.l2_norm();
+  const double rhs_l2     = system_rhs.l2_norm();
+
+  unsigned int idx = 0;
+  for (auto cell = dof_handler.begin_active(); cell != dof_handler.end(); ++cell, ++idx)
+    if (cell->is_locally_owned())
+      out << idx << ","
+          << std::setprecision(16) << estimated_error_per_cell(idx) << ","
+          << gmres_res << ","
+          << sol_inc_l2 << ","
+          << rhs_l2 << ","
+          << "\"provisional public scaffold only\"\n";
+}
+
 int main(int argc, char *argv[])
 {
   try
