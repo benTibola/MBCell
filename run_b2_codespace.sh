@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
@@ -10,12 +11,14 @@ text = p.read_text()
 old = 'time(1e0, 1e-3, 1e-2, 1e-2)'
 new = 'time(1e-2, 1e-3, 1e-2, 1e0)'
 if old in text:
-    p.write_text(text.replace(old, new))
+    text = text.replace(old, new)
+    p.write_text(text)
 PY
 
 rm -rf build
-mkdir build
+mkdir -p build
 cd build
+
 cmake ..
 make -j2
 ./fluid | tee SOLVER_LOG.txt
@@ -43,4 +46,7 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.write(p, p.relative_to(root))
 print(f'Created {out}')
 PY
+
+echo
 echo "DONE"
+echo "Your file is: build/B2_public_run_01_min.zip"
