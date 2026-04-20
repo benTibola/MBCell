@@ -1065,13 +1065,24 @@ namespace fluid
                                     ".csv");
             kelly_out << "cell_index,estimated_error,cell_center_x,cell_center_y,cell_level,boundary_touch_flag\n";
 
-            std::ofstream env_out("PROVISIONAL_ERROR_ENVELOPE_step" +
+            double kelly_sum = 0.0;
+            double kelly_max = 0.0;
+            for (unsigned int i = 0; i < estimated_error_per_cell.size(); ++i)
+              {
+                const double v = estimated_error_per_cell(i);
+                kelly_sum += v;
+                if (v > kelly_max)
+                  kelly_max = v;
+              }
+            const double kelly_mean =
+              (estimated_error_per_cell.size() > 0 ?
+                 kelly_sum / static_cast<double>(estimated_error_per_cell.size()) :
+                 0.0);
+
+            std::ofstream env_out("KELLY_LOCAL_ENVELOPE_PROXY_step" +
                                   Utilities::int_to_string(time.get_timestep(), 6) +
                                   ".csv");
-            env_out << "cell_index,kelly_indicator,global_gmres_residual,global_solution_increment_l2,global_rhs_l2,envelope_note\n";
-
-            const double sol_inc_l2 = solution_increment.l2_norm();
-            const double rhs_l2     = system_rhs.l2_norm();
+            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,local_envelope_total_proxy,export_grade,envelope_note\n";
 
             unsigned int idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1083,19 +1094,29 @@ namespace fluid
                     if (cell->face(f)->at_boundary())
                       boundary_touch = true;
 
+                  const double kelly_value     = estimated_error_per_cell(idx);
+                  const double kelly_over_max  = (kelly_max > 0.0 ? kelly_value / kelly_max : 0.0);
+                  const double kelly_over_mean = (kelly_mean > 0.0 ? kelly_value / kelly_mean : 0.0);
+                  const double local_proxy     = kelly_value;
+
                   kelly_out << idx << ","
-                            << estimated_error_per_cell(idx) << ","
+                            << kelly_value << ","
                             << cell->center()[0] << ","
                             << cell->center()[1] << ","
                             << cell->level() << ","
                             << (boundary_touch ? 1 : 0) << "\n";
 
                   env_out << idx << ","
-                          << estimated_error_per_cell(idx) << ","
-                          << state.second << ","
-                          << sol_inc_l2 << ","
-                          << rhs_l2 << ","
-                          << "\"provisional public scaffold only\"\n";
+                          << kelly_value << ","
+                          << cell->center()[0] << ","
+                          << cell->center()[1] << ","
+                          << cell->level() << ","
+                          << (boundary_touch ? 1 : 0) << ","
+                          << kelly_over_max << ","
+                          << kelly_over_mean << ","
+                          << local_proxy << ","
+                          << "\"local_proxy_only\"" << ","
+                          << "\"first non-provisional local export; Kelly-led proxy only; theorem channels not yet exported\"\n";
                 }
 
             output_results(time.get_timestep());
