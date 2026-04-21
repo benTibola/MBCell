@@ -1086,10 +1086,13 @@ namespace fluid
                                                    face_midpoint_quad,
                                                    update_values);
             const FEValuesExtractors::Scalar pressure(dim);
+            std::vector<double> velocity_speed_midpoint(estimated_error_per_cell.size(),
+                                                       0.0);
             std::vector<double> pressure_midpoint_abs(estimated_error_per_cell.size(), 0.0);
             std::vector<double> shell_face_variation(estimated_error_per_cell.size(), 0.0);
-            double pressure_midpoint_abs_max = 0.0;
-            double shell_face_variation_max  = 0.0;
+            double velocity_speed_midpoint_max = 0.0;
+            double pressure_midpoint_abs_max   = 0.0;
+            double shell_face_variation_max    = 0.0;
 
             unsigned int pressure_idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1120,18 +1123,21 @@ namespace fluid
                     shell_variation_sum /
                     static_cast<double>(GeometryInfo<dim>::faces_per_cell);
 
+                  velocity_speed_midpoint[pressure_idx] = cell_speed_midpoint;
                   pressure_midpoint_abs[pressure_idx] = pressure_abs_value;
                   shell_face_variation[pressure_idx]  = shell_variation_value;
+                  if (cell_speed_midpoint > velocity_speed_midpoint_max)
+                    velocity_speed_midpoint_max = cell_speed_midpoint;
                   if (pressure_abs_value > pressure_midpoint_abs_max)
                     pressure_midpoint_abs_max = pressure_abs_value;
                   if (shell_variation_value > shell_face_variation_max)
                     shell_face_variation_max = shell_variation_value;
                 }
 
-            std::ofstream env_out("KELLY_PRESSURESHELLAUG_LOCAL_ENVELOPE_PROXY_step" +
+            std::ofstream env_out("KELLY_PRESSURESHELLKIN_LOCAL_ENVELOPE_PROXY_step" +
                                   Utilities::int_to_string(time.get_timestep(), 6) +
                                   ".csv");
-            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,pressure_abs_midpoint,pressure_abs_over_max,shell_face_variation,shell_face_variation_over_max,local_momentum_residual_proxy,local_pressure_proxy,local_shell_interface_proxy,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
+            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,velocity_speed_midpoint,velocity_speed_over_max,pressure_abs_midpoint,pressure_abs_over_max,shell_face_variation,shell_face_variation_over_max,local_kinematic_proxy,local_pressure_proxy,local_shell_interface_proxy,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
 
             unsigned int idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1146,6 +1152,12 @@ namespace fluid
                   const double kelly_value     = estimated_error_per_cell(idx);
                   const double kelly_over_max  = (kelly_max > 0.0 ? kelly_value / kelly_max : 0.0);
                   const double kelly_over_mean = (kelly_mean > 0.0 ? kelly_value / kelly_mean : 0.0);
+                  const double velocity_speed_midpoint_value =
+                    velocity_speed_midpoint[idx];
+                  const double velocity_speed_over_max =
+                    (velocity_speed_midpoint_max > 0.0 ?
+                       velocity_speed_midpoint_value / velocity_speed_midpoint_max :
+                       0.0);
                   const double pressure_abs_midpoint = pressure_midpoint_abs[idx];
                   const double pressure_abs_over_max =
                     (pressure_midpoint_abs_max > 0.0 ?
@@ -1157,14 +1169,14 @@ namespace fluid
                        shell_face_variation_value / shell_face_variation_max :
                        0.0);
 
-                  const double local_momentum_residual_proxy = kelly_over_mean;
-                  const double local_pressure_proxy          = pressure_abs_over_max;
+                  const double local_kinematic_proxy        = velocity_speed_over_max;
+                  const double local_pressure_proxy         = pressure_abs_over_max;
                   const double local_shell_interface_proxy   =
                     shell_face_variation_over_max;
                   const double kelly_core_proxy =
                     0.5 * (kelly_over_max + kelly_over_mean);
                   const double local_envelope_total_proxy =
-                    std::max(std::max(kelly_core_proxy, local_momentum_residual_proxy),
+                    std::max(std::max(kelly_core_proxy, local_kinematic_proxy),
                              std::max(local_pressure_proxy, local_shell_interface_proxy));
 
                   kelly_out << idx << ","
@@ -1182,16 +1194,20 @@ namespace fluid
                           << (boundary_touch ? 1 : 0) << ","
                           << kelly_over_max << ","
                           << kelly_over_mean << ","
+                          << velocity_speed_midpoint_value << ","
+                          << velocity_speed_over_max << ","
                           << pressure_abs_midpoint << ","
                           << pressure_abs_over_max << ","
-                          << local_momentum_residual_proxy << ","
+                          << shell_face_variation_value << ","
+                          << shell_face_variation_over_max << ","
+                          << local_kinematic_proxy << ","
                           << local_pressure_proxy << ","
                           << local_shell_interface_proxy << ","
                           << local_envelope_total_proxy << ","
                           << 4 << ","
-                          << 1 << ","
-                          << "\"consolidated_pressure_augmented_multichannel_local_proxy\"" << ","
-                          << "\"consolidated local export; Kelly spine plus solver-sourced pressure midpoint channel; momentum and shell proxies remain Kelly/context-derived; theorem channels not yet fully exported\"\n";
+                          << 3 << ","
+                          << "\"consolidated_pressure_shell_kinematic_multichannel_local_proxy\"" << ","
+                          << "\"consolidated local export; Kelly spine plus solver-sourced kinematic midpoint, pressure midpoint, and face-shell variation channels; true local momentum residual, divergence, and commutator channels not yet exported\"\n";
                 }
 
             output_results(time.get_timestep());
