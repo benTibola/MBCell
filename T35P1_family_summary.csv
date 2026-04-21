@@ -1,0 +1,4 @@
+family,count,cells,mean_margin_min,worst_margin_min,boundary_cells
+commutator-only family,6,15 24 25 44 45 58,-0.284838,-0.506659,2
+pressure-only family,3,30 31 42,-0.1298166666666666,-0.198453,3
+dual mixed pair,2,26 47,-0.6337629999999999,-0.6385149999999999,2

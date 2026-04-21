@@ -1091,7 +1091,10 @@ namespace fluid
             std::vector<double> velocity_speed_midpoint(estimated_error_per_cell.size(),
                                                        0.0);
             std::vector<double> pressure_midpoint_abs(estimated_error_per_cell.size(), 0.0);
+            std::vector<double> pressure_face_variation(estimated_error_per_cell.size(), 0.0);
             std::vector<double> shell_face_variation(estimated_error_per_cell.size(), 0.0);
+            std::vector<double> commutator_localization_factor_values(estimated_error_per_cell.size(),
+                                                                      0.0);
             std::vector<double> time_derivative_proxy_values(estimated_error_per_cell.size(),
                                                              0.0);
             std::vector<double> convective_proxy_values(estimated_error_per_cell.size(),
@@ -1114,6 +1117,7 @@ namespace fluid
                                                            0.0);
             double velocity_speed_midpoint_max = 0.0;
             double pressure_midpoint_abs_max   = 0.0;
+            double pressure_face_variation_max = 0.0;
             double shell_face_variation_max    = 0.0;
             double local_momentum_residual_proxy_max = 0.0;
             double certified_error_carrier_max = 0.0;
@@ -1158,18 +1162,27 @@ namespace fluid
                   const double viscous_surrogate =
                     (diameter > 0.0 ? viscosity * velocity_gradient_frobenius / diameter : 0.0);
                   double shell_variation_sum = 0.0;
+                  double pressure_face_variation_sum = 0.0;
                   for (unsigned int f = 0; f < GeometryInfo<dim>::faces_per_cell; ++f)
                     {
                       face_midpoint_values.reinit(cell, f);
                       std::vector<Tensor<1, dim>> face_velocity_values(1);
+                      std::vector<double> face_pressure_values(1, 0.0);
                       face_midpoint_values[velocity].get_function_values(present_solution,
                                                                          face_velocity_values);
+                      face_midpoint_values[pressure].get_function_values(present_solution,
+                                                                         face_pressure_values);
                       const double face_speed_midpoint = face_velocity_values[0].norm();
                       shell_variation_sum +=
                         std::abs(face_speed_midpoint - cell_speed_midpoint);
+                      pressure_face_variation_sum +=
+                        std::abs(face_pressure_values[0] - pressure_values[0]);
                     }
                   const double shell_variation_value =
                     shell_variation_sum /
+                    static_cast<double>(GeometryInfo<dim>::faces_per_cell);
+                  const double pressure_face_variation_value =
+                    pressure_face_variation_sum /
                     static_cast<double>(GeometryInfo<dim>::faces_per_cell);
                   const double force_sum_proxy =
                     convective_proxy + pressure_gradient_proxy + viscous_surrogate;
@@ -1178,31 +1191,36 @@ namespace fluid
                   const double residual_surrogate_value =
                     residual_balance_gap_value /
                     (time_derivative_proxy + force_sum_proxy + 1e-12);
-                  // T35-A1R refinement: avoid triple-counting the same obstruction
-                  // family by allocating the residual-balance gap across carrier,
-                  // pressure, and commutator lanes using activity shares drawn from
-                  // the same local balance budget.
+                  // T35-P2 split refinement: keep the carrier repair, replace the
+                  // pressure lane by a direct pressure face-variation quantity, and
+                  // localize the commutator lane by the ratio of shell variation to
+                  // the local transport scale.
                   const double total_activity_proxy =
                     time_derivative_proxy + convective_proxy +
                     pressure_gradient_proxy + viscous_surrogate + 1e-12;
                   const double carrier_share =
                     time_derivative_proxy / total_activity_proxy;
-                  const double pressure_share =
-                    pressure_gradient_proxy / total_activity_proxy;
                   const double commutator_share =
                     convective_proxy / total_activity_proxy;
+                  const double commutator_localization_factor =
+                    shell_variation_value /
+                    (shell_variation_value + cell_speed_midpoint + 1e-12);
                   const double certified_error_carrier_value =
                     diameter * residual_balance_gap_value * carrier_share;
                   const double certified_error_shell_value =
                     diameter * shell_variation_value;
                   const double certified_error_pressure_value =
-                    diameter * residual_balance_gap_value * pressure_share;
+                    diameter * pressure_face_variation_value;
                   const double certified_error_commutator_value =
-                    diameter * residual_balance_gap_value * commutator_share;
+                    diameter * residual_balance_gap_value * commutator_share *
+                    commutator_localization_factor;
 
                   velocity_speed_midpoint[pressure_idx] = cell_speed_midpoint;
                   pressure_midpoint_abs[pressure_idx] = pressure_abs_value;
+                  pressure_face_variation[pressure_idx] = pressure_face_variation_value;
                   shell_face_variation[pressure_idx] = shell_variation_value;
+                  commutator_localization_factor_values[pressure_idx] =
+                    commutator_localization_factor;
                   time_derivative_proxy_values[pressure_idx] = time_derivative_proxy;
                   convective_proxy_values[pressure_idx] = convective_proxy;
                   pressure_gradient_proxy_values[pressure_idx] = pressure_gradient_proxy;
@@ -1218,6 +1236,8 @@ namespace fluid
                     velocity_speed_midpoint_max = cell_speed_midpoint;
                   if (pressure_abs_value > pressure_midpoint_abs_max)
                     pressure_midpoint_abs_max = pressure_abs_value;
+                  if (pressure_face_variation_value > pressure_face_variation_max)
+                    pressure_face_variation_max = pressure_face_variation_value;
                   if (shell_variation_value > shell_face_variation_max)
                     shell_face_variation_max = shell_variation_value;
                   if (residual_surrogate_value > local_momentum_residual_proxy_max)
@@ -1237,12 +1257,12 @@ namespace fluid
             std::ofstream err_out("C1_CERTIFIED_ERROR_COMPONENTS_step" +
                                   Utilities::int_to_string(time.get_timestep(), 6) +
                                   ".csv");
-            err_out << "cell_index,err_carrier,err_shell,err_pressure,err_commutator,h_cell,residual_balance_gap,time_derivative_proxy,convective_proxy,pressure_gradient_proxy,viscous_surrogate,shell_face_variation,err_carrier_over_max,err_shell_over_max,err_pressure_over_max,err_commutator_over_max,certified_error_note\n";
+            err_out << "cell_index,err_carrier,err_shell,err_pressure,err_commutator,h_cell,residual_balance_gap,time_derivative_proxy,convective_proxy,pressure_gradient_proxy,viscous_surrogate,pressure_face_variation,shell_face_variation,commutator_localization_factor,err_carrier_over_max,err_shell_over_max,err_pressure_over_max,err_commutator_over_max,certified_error_note\n";
 
-            std::ofstream env_out("KELLY_PRESSURESHELLKINRESREF_LOCAL_ENVELOPE_PROXY_step" +
+            std::ofstream env_out("KELLY_PRESSURESHELLKINRESREF2_LOCAL_ENVELOPE_PROXY_step" +
                                   Utilities::int_to_string(time.get_timestep(), 6) +
                                   ".csv");
-            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,kinematic_midpoint,kinematic_over_max,pressure_abs_midpoint,pressure_abs_over_max,shell_face_variation,shell_face_variation_over_max,time_derivative_proxy,convective_proxy,pressure_gradient_proxy,viscous_surrogate,local_momentum_residual_proxy,local_momentum_residual_over_max,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
+            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,kinematic_midpoint,kinematic_over_max,pressure_abs_midpoint,pressure_abs_over_max,pressure_face_variation,pressure_face_variation_over_max,shell_face_variation,shell_face_variation_over_max,time_derivative_proxy,convective_proxy,pressure_gradient_proxy,viscous_surrogate,commutator_localization_factor,local_momentum_residual_proxy,local_momentum_residual_over_max,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
 
             unsigned int idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1268,6 +1288,12 @@ namespace fluid
                     (pressure_midpoint_abs_max > 0.0 ?
                        pressure_abs_midpoint / pressure_midpoint_abs_max :
                        0.0);
+                  const double pressure_face_variation_value =
+                    pressure_face_variation[idx];
+                  const double pressure_face_variation_over_max =
+                    (pressure_face_variation_max > 0.0 ?
+                       pressure_face_variation_value / pressure_face_variation_max :
+                       0.0);
                   const double shell_face_variation_value = shell_face_variation[idx];
                   const double shell_face_variation_over_max =
                     (shell_face_variation_max > 0.0 ?
@@ -1286,6 +1312,8 @@ namespace fluid
                     pressure_gradient_proxy_values[idx];
                   const double viscous_surrogate_value =
                     viscous_surrogate_values[idx];
+                  const double commutator_localization_factor_value =
+                    commutator_localization_factor_values[idx];
                   const double local_momentum_residual_proxy_value =
                     local_momentum_residual_proxy[idx];
                   const double local_momentum_residual_over_max =
@@ -1343,12 +1371,14 @@ namespace fluid
                           << convective_proxy_value << ","
                           << pressure_gradient_proxy_value << ","
                           << viscous_surrogate_value << ","
+                          << pressure_face_variation_value << ","
                           << shell_face_variation_value << ","
+                          << commutator_localization_factor_value << ","
                           << err_carrier_over_max << ","
                           << err_shell_over_max << ","
                           << err_pressure_over_max << ","
                           << err_commutator_over_max << ","
-                          << "A-route first direct numeric componentwise bound export for C1; threshold insertion and admissibility adjudication deferred to T34-A2/T34-A3" << "\n";
+                          << "T35-P2 split refinement: carrier repair retained; pressure lane uses pressure face-variation; commutator lane uses residual-share localized by shell-vs-speed factor; renewed rerun required for discharge audit" << "\n";
 
                   env_out << idx << ","
                           << kelly_value << ","
@@ -1362,19 +1392,22 @@ namespace fluid
                           << velocity_speed_over_max << ","
                           << pressure_abs_midpoint << ","
                           << pressure_abs_over_max << ","
+                          << pressure_face_variation_value << ","
+                          << pressure_face_variation_over_max << ","
                           << shell_face_variation_value << ","
                           << shell_face_variation_over_max << ","
                           << time_derivative_proxy_value << ","
                           << convective_proxy_value << ","
                           << pressure_gradient_proxy_value << ","
                           << viscous_surrogate_value << ","
+                          << commutator_localization_factor_value << ","
                           << local_momentum_residual_proxy_value << ","
                           << local_momentum_residual_over_max << ","
                           << local_envelope_total_proxy << ","
                           << 5 << ","
                           << 4 << ","
-                          << "residual_refined_multichannel_local_proxy" << ","
-                          << "last justified theorem-facing build; residual column refined into normalized momentum-balance gap using increment-over-dt versus convective+pressure-gradient+viscous activity; decomposition columns exported explicitly for audit; divergence and commutator channels not yet exported\n";
+                          << "split_refined_multichannel_local_proxy" << ","
+                          << "T35-P2 split refinement: pressure lane uses pressure face-variation; commutator lane uses residual-share localized by shell-vs-speed factor; carrier repair retained; shell unchanged\n";
                 }
 
             output_results(time.get_timestep());

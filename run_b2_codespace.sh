@@ -34,7 +34,7 @@ cp RHS_NORMS.csv B2_public_run_01_min/ 2>/dev/null || true
 cp KELLY_INDICATOR_step*.csv B2_public_run_01_min/ 2>/dev/null || true
 cp KELLY_*LOCAL_ENVELOPE_PROXY_step*.csv B2_public_run_01_min/ 2>/dev/null || true
 cp C1_CERTIFIED_ERROR_COMPONENTS_step*.csv B2_public_run_01_min/ 2>/dev/null || true
-printf 'Built public deal.II cylinder run for first slab [0.00,0.01] with A-route residual-bound export implementation: local proxy bundle plus direct numeric componentwise certified-error candidate export for C1.\n' > B2_public_run_01_min/RUN_METADATA.txt
+printf 'Built public deal.II cylinder run for first slab [0.00,0.01] with T35-P2 split refinement: carrier repair retained, pressure lane switched to pressure face-variation, commutator lane localized by shell-vs-speed factor, shell unchanged.\n' > B2_public_run_01_min/RUN_METADATA.txt
 
 python3 - <<'PY'
 from pathlib import Path
