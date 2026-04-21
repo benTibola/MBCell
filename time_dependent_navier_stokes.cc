@@ -1178,14 +1178,27 @@ namespace fluid
                   const double residual_surrogate_value =
                     residual_balance_gap_value /
                     (time_derivative_proxy + force_sum_proxy + 1e-12);
+                  // T35-A1R refinement: avoid triple-counting the same obstruction
+                  // family by allocating the residual-balance gap across carrier,
+                  // pressure, and commutator lanes using activity shares drawn from
+                  // the same local balance budget.
+                  const double total_activity_proxy =
+                    time_derivative_proxy + convective_proxy +
+                    pressure_gradient_proxy + viscous_surrogate + 1e-12;
+                  const double carrier_share =
+                    time_derivative_proxy / total_activity_proxy;
+                  const double pressure_share =
+                    pressure_gradient_proxy / total_activity_proxy;
+                  const double commutator_share =
+                    convective_proxy / total_activity_proxy;
                   const double certified_error_carrier_value =
-                    diameter * residual_balance_gap_value;
+                    diameter * residual_balance_gap_value * carrier_share;
                   const double certified_error_shell_value =
                     diameter * shell_variation_value;
                   const double certified_error_pressure_value =
-                    diameter * pressure_gradient_proxy;
+                    diameter * residual_balance_gap_value * pressure_share;
                   const double certified_error_commutator_value =
-                    diameter * convective_proxy;
+                    diameter * residual_balance_gap_value * commutator_share;
 
                   velocity_speed_midpoint[pressure_idx] = cell_speed_midpoint;
                   pressure_midpoint_abs[pressure_idx] = pressure_abs_value;
