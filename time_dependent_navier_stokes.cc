@@ -1079,10 +1079,31 @@ namespace fluid
                  kelly_sum / static_cast<double>(estimated_error_per_cell.size()) :
                  0.0);
 
-            std::ofstream env_out("KELLY_MULTICHANNEL_LOCAL_ENVELOPE_PROXY_step" +
+            QMidpoint<dim> midpoint_quad;
+            FEValues<dim> midpoint_values(fe, midpoint_quad, update_values);
+            const FEValuesExtractors::Scalar pressure(dim);
+            std::vector<double> pressure_midpoint_abs(estimated_error_per_cell.size(), 0.0);
+            double pressure_midpoint_abs_max = 0.0;
+
+            unsigned int pressure_idx = 0;
+            for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
+                 ++cell, ++pressure_idx)
+              if (cell->is_locally_owned())
+                {
+                  midpoint_values.reinit(cell);
+                  std::vector<double> pressure_values(1, 0.0);
+                  midpoint_values[pressure].get_function_values(present_solution,
+                                                                pressure_values);
+                  const double pressure_abs_value = std::abs(pressure_values[0]);
+                  pressure_midpoint_abs[pressure_idx] = pressure_abs_value;
+                  if (pressure_abs_value > pressure_midpoint_abs_max)
+                    pressure_midpoint_abs_max = pressure_abs_value;
+                }
+
+            std::ofstream env_out("KELLY_CONSOLIDATED_LOCAL_ENVELOPE_PROXY_step" +
                                   Utilities::int_to_string(time.get_timestep(), 6) +
                                   ".csv");
-            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,local_momentum_residual_proxy,local_pressure_proxy,local_shell_interface_proxy,local_envelope_total_proxy,channel_count,export_grade,envelope_note\n";
+            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,pressure_abs_midpoint,pressure_abs_over_max,local_momentum_residual_proxy,local_pressure_proxy,local_shell_interface_proxy,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
 
             unsigned int idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1097,11 +1118,14 @@ namespace fluid
                   const double kelly_value     = estimated_error_per_cell(idx);
                   const double kelly_over_max  = (kelly_max > 0.0 ? kelly_value / kelly_max : 0.0);
                   const double kelly_over_mean = (kelly_mean > 0.0 ? kelly_value / kelly_mean : 0.0);
+                  const double pressure_abs_midpoint = pressure_midpoint_abs[idx];
+                  const double pressure_abs_over_max =
+                    (pressure_midpoint_abs_max > 0.0 ?
+                       pressure_abs_midpoint / pressure_midpoint_abs_max :
+                       0.0);
 
                   const double local_momentum_residual_proxy = kelly_over_mean;
-                  const double local_pressure_proxy =
-                    0.5 * (kelly_over_max +
-                           (boundary_touch ? kelly_over_mean : 0.5 * kelly_over_mean));
+                  const double local_pressure_proxy          = pressure_abs_over_max;
                   const double local_shell_interface_proxy =
                     (boundary_touch ? 1.0 : 0.25) * kelly_over_max;
                   const double kelly_core_proxy =
@@ -1125,13 +1149,16 @@ namespace fluid
                           << (boundary_touch ? 1 : 0) << ","
                           << kelly_over_max << ","
                           << kelly_over_mean << ","
+                          << pressure_abs_midpoint << ","
+                          << pressure_abs_over_max << ","
                           << local_momentum_residual_proxy << ","
                           << local_pressure_proxy << ","
                           << local_shell_interface_proxy << ","
                           << local_envelope_total_proxy << ","
                           << 4 << ","
-                          << "\"multichannel_local_proxy\"" << ","
-                          << "\"first multichannel local proxy export; Kelly/context-derived residual-pressure-shell proxies only; theorem channels not yet exported\"\n";
+                          << 1 << ","
+                          << "\"consolidated_pressure_augmented_multichannel_local_proxy\"" << ","
+                          << "\"consolidated local export; Kelly spine plus solver-sourced pressure midpoint channel; momentum and shell proxies remain Kelly/context-derived; theorem channels not yet fully exported\"\n";
                 }
 
             output_results(time.get_timestep());
