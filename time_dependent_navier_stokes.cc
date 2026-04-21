@@ -1080,10 +1080,16 @@ namespace fluid
                  0.0);
 
             QMidpoint<dim> midpoint_quad;
+            QMidpoint<dim - 1> face_midpoint_quad;
             FEValues<dim> midpoint_values(fe, midpoint_quad, update_values);
+            FEFaceValues<dim> face_midpoint_values(fe,
+                                                   face_midpoint_quad,
+                                                   update_values);
             const FEValuesExtractors::Scalar pressure(dim);
             std::vector<double> pressure_midpoint_abs(estimated_error_per_cell.size(), 0.0);
+            std::vector<double> shell_face_variation(estimated_error_per_cell.size(), 0.0);
             double pressure_midpoint_abs_max = 0.0;
+            double shell_face_variation_max  = 0.0;
 
             unsigned int pressure_idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1092,18 +1098,40 @@ namespace fluid
                 {
                   midpoint_values.reinit(cell);
                   std::vector<double> pressure_values(1, 0.0);
+                  std::vector<Tensor<1, dim>> cell_velocity_values(1);
                   midpoint_values[pressure].get_function_values(present_solution,
                                                                 pressure_values);
+                  midpoint_values[velocity].get_function_values(present_solution,
+                                                                cell_velocity_values);
                   const double pressure_abs_value = std::abs(pressure_values[0]);
+                  const double cell_speed_midpoint = cell_velocity_values[0].norm();
+                  double shell_variation_sum = 0.0;
+                  for (unsigned int f = 0; f < GeometryInfo<dim>::faces_per_cell; ++f)
+                    {
+                      face_midpoint_values.reinit(cell, f);
+                      std::vector<Tensor<1, dim>> face_velocity_values(1);
+                      face_midpoint_values[velocity].get_function_values(present_solution,
+                                                                         face_velocity_values);
+                      const double face_speed_midpoint = face_velocity_values[0].norm();
+                      shell_variation_sum +=
+                        std::abs(face_speed_midpoint - cell_speed_midpoint);
+                    }
+                  const double shell_variation_value =
+                    shell_variation_sum /
+                    static_cast<double>(GeometryInfo<dim>::faces_per_cell);
+
                   pressure_midpoint_abs[pressure_idx] = pressure_abs_value;
+                  shell_face_variation[pressure_idx]  = shell_variation_value;
                   if (pressure_abs_value > pressure_midpoint_abs_max)
                     pressure_midpoint_abs_max = pressure_abs_value;
+                  if (shell_variation_value > shell_face_variation_max)
+                    shell_face_variation_max = shell_variation_value;
                 }
 
-            std::ofstream env_out("KELLY_CONSOLIDATED_LOCAL_ENVELOPE_PROXY_step" +
+            std::ofstream env_out("KELLY_PRESSURESHELLAUG_LOCAL_ENVELOPE_PROXY_step" +
                                   Utilities::int_to_string(time.get_timestep(), 6) +
                                   ".csv");
-            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,pressure_abs_midpoint,pressure_abs_over_max,local_momentum_residual_proxy,local_pressure_proxy,local_shell_interface_proxy,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
+            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,pressure_abs_midpoint,pressure_abs_over_max,shell_face_variation,shell_face_variation_over_max,local_momentum_residual_proxy,local_pressure_proxy,local_shell_interface_proxy,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
 
             unsigned int idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1123,11 +1151,16 @@ namespace fluid
                     (pressure_midpoint_abs_max > 0.0 ?
                        pressure_abs_midpoint / pressure_midpoint_abs_max :
                        0.0);
+                  const double shell_face_variation_value = shell_face_variation[idx];
+                  const double shell_face_variation_over_max =
+                    (shell_face_variation_max > 0.0 ?
+                       shell_face_variation_value / shell_face_variation_max :
+                       0.0);
 
                   const double local_momentum_residual_proxy = kelly_over_mean;
                   const double local_pressure_proxy          = pressure_abs_over_max;
-                  const double local_shell_interface_proxy =
-                    (boundary_touch ? 1.0 : 0.25) * kelly_over_max;
+                  const double local_shell_interface_proxy   =
+                    shell_face_variation_over_max;
                   const double kelly_core_proxy =
                     0.5 * (kelly_over_max + kelly_over_mean);
                   const double local_envelope_total_proxy =
