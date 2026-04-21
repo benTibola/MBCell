@@ -33,7 +33,8 @@ cp INCREMENT_NORMS.csv B2_public_run_01_min/ 2>/dev/null || true
 cp RHS_NORMS.csv B2_public_run_01_min/ 2>/dev/null || true
 cp KELLY_INDICATOR_step*.csv B2_public_run_01_min/ 2>/dev/null || true
 cp KELLY_*LOCAL_ENVELOPE_PROXY_step*.csv B2_public_run_01_min/ 2>/dev/null || true
-printf 'Built public deal.II cylinder run for first slab [0.00,0.01] with residual-augmented consolidated kinematic+pressure+shell local proxy export.\n' > B2_public_run_01_min/RUN_METADATA.txt
+cp C1_CERTIFIED_ERROR_COMPONENTS_step*.csv B2_public_run_01_min/ 2>/dev/null || true
+printf 'Built public deal.II cylinder run for first slab [0.00,0.01] with A-route residual-bound export implementation: local proxy bundle plus direct numeric componentwise certified-error candidate export for C1.\n' > B2_public_run_01_min/RUN_METADATA.txt
 
 python3 - <<'PY'
 from pathlib import Path

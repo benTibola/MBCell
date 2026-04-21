@@ -1102,10 +1102,24 @@ namespace fluid
                                                          0.0);
             std::vector<double> local_momentum_residual_proxy(estimated_error_per_cell.size(),
                                                               0.0);
+            std::vector<double> residual_balance_gap_values(estimated_error_per_cell.size(),
+                                                            0.0);
+            std::vector<double> certified_error_carrier(estimated_error_per_cell.size(),
+                                                        0.0);
+            std::vector<double> certified_error_shell(estimated_error_per_cell.size(),
+                                                      0.0);
+            std::vector<double> certified_error_pressure(estimated_error_per_cell.size(),
+                                                         0.0);
+            std::vector<double> certified_error_commutator(estimated_error_per_cell.size(),
+                                                           0.0);
             double velocity_speed_midpoint_max = 0.0;
             double pressure_midpoint_abs_max   = 0.0;
             double shell_face_variation_max    = 0.0;
             double local_momentum_residual_proxy_max = 0.0;
+            double certified_error_carrier_max = 0.0;
+            double certified_error_shell_max   = 0.0;
+            double certified_error_pressure_max = 0.0;
+            double certified_error_commutator_max = 0.0;
 
             unsigned int pressure_idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1164,6 +1178,14 @@ namespace fluid
                   const double residual_surrogate_value =
                     residual_balance_gap_value /
                     (time_derivative_proxy + force_sum_proxy + 1e-12);
+                  const double certified_error_carrier_value =
+                    diameter * residual_balance_gap_value;
+                  const double certified_error_shell_value =
+                    diameter * shell_variation_value;
+                  const double certified_error_pressure_value =
+                    diameter * pressure_gradient_proxy;
+                  const double certified_error_commutator_value =
+                    diameter * convective_proxy;
 
                   velocity_speed_midpoint[pressure_idx] = cell_speed_midpoint;
                   pressure_midpoint_abs[pressure_idx] = pressure_abs_value;
@@ -1173,6 +1195,12 @@ namespace fluid
                   pressure_gradient_proxy_values[pressure_idx] = pressure_gradient_proxy;
                   viscous_surrogate_values[pressure_idx] = viscous_surrogate;
                   local_momentum_residual_proxy[pressure_idx] = residual_surrogate_value;
+                  residual_balance_gap_values[pressure_idx] = residual_balance_gap_value;
+                  certified_error_carrier[pressure_idx] = certified_error_carrier_value;
+                  certified_error_shell[pressure_idx] = certified_error_shell_value;
+                  certified_error_pressure[pressure_idx] = certified_error_pressure_value;
+                  certified_error_commutator[pressure_idx] =
+                    certified_error_commutator_value;
                   if (cell_speed_midpoint > velocity_speed_midpoint_max)
                     velocity_speed_midpoint_max = cell_speed_midpoint;
                   if (pressure_abs_value > pressure_midpoint_abs_max)
@@ -1181,7 +1209,22 @@ namespace fluid
                     shell_face_variation_max = shell_variation_value;
                   if (residual_surrogate_value > local_momentum_residual_proxy_max)
                     local_momentum_residual_proxy_max = residual_surrogate_value;
+                  if (certified_error_carrier_value > certified_error_carrier_max)
+                    certified_error_carrier_max = certified_error_carrier_value;
+                  if (certified_error_shell_value > certified_error_shell_max)
+                    certified_error_shell_max = certified_error_shell_value;
+                  if (certified_error_pressure_value > certified_error_pressure_max)
+                    certified_error_pressure_max = certified_error_pressure_value;
+                  if (certified_error_commutator_value >
+                      certified_error_commutator_max)
+                    certified_error_commutator_max =
+                      certified_error_commutator_value;
                 }
+
+            std::ofstream err_out("C1_CERTIFIED_ERROR_COMPONENTS_step" +
+                                  Utilities::int_to_string(time.get_timestep(), 6) +
+                                  ".csv");
+            err_out << "cell_index,err_carrier,err_shell,err_pressure,err_commutator,h_cell,residual_balance_gap,time_derivative_proxy,convective_proxy,pressure_gradient_proxy,viscous_surrogate,shell_face_variation,err_carrier_over_max,err_shell_over_max,err_pressure_over_max,err_commutator_over_max,certified_error_note\n";
 
             std::ofstream env_out("KELLY_PRESSURESHELLKINRESREF_LOCAL_ENVELOPE_PROXY_step" +
                                   Utilities::int_to_string(time.get_timestep(), 6) +
@@ -1237,6 +1280,30 @@ namespace fluid
                        local_momentum_residual_proxy_value /
                          local_momentum_residual_proxy_max :
                        0.0);
+                  const double err_carrier_value = certified_error_carrier[idx];
+                  const double err_shell_value = certified_error_shell[idx];
+                  const double err_pressure_value = certified_error_pressure[idx];
+                  const double err_commutator_value =
+                    certified_error_commutator[idx];
+                  const double err_carrier_over_max =
+                    (certified_error_carrier_max > 0.0 ?
+                       err_carrier_value / certified_error_carrier_max :
+                       0.0);
+                  const double err_shell_over_max =
+                    (certified_error_shell_max > 0.0 ?
+                       err_shell_value / certified_error_shell_max :
+                       0.0);
+                  const double err_pressure_over_max =
+                    (certified_error_pressure_max > 0.0 ?
+                       err_pressure_value / certified_error_pressure_max :
+                       0.0);
+                  const double err_commutator_over_max =
+                    (certified_error_commutator_max > 0.0 ?
+                       err_commutator_value / certified_error_commutator_max :
+                       0.0);
+                  const double residual_balance_gap_value =
+                    residual_balance_gap_values[idx];
+                  const double h_cell = cell->diameter();
                   const double kelly_core_proxy =
                     0.5 * (kelly_over_max + kelly_over_mean);
                   const double local_envelope_total_proxy =
@@ -1251,6 +1318,24 @@ namespace fluid
                             << cell->center()[1] << ","
                             << cell->level() << ","
                             << (boundary_touch ? 1 : 0) << "\n";
+
+                  err_out << idx << ","
+                          << err_carrier_value << ","
+                          << err_shell_value << ","
+                          << err_pressure_value << ","
+                          << err_commutator_value << ","
+                          << h_cell << ","
+                          << residual_balance_gap_value << ","
+                          << time_derivative_proxy_value << ","
+                          << convective_proxy_value << ","
+                          << pressure_gradient_proxy_value << ","
+                          << viscous_surrogate_value << ","
+                          << shell_face_variation_value << ","
+                          << err_carrier_over_max << ","
+                          << err_shell_over_max << ","
+                          << err_pressure_over_max << ","
+                          << err_commutator_over_max << ","
+                          << "A-route first direct numeric componentwise bound export for C1; threshold insertion and admissibility adjudication deferred to T34-A2/T34-A3" << "\n";
 
                   env_out << idx << ","
                           << kelly_value << ","
