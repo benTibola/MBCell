@@ -1092,6 +1092,14 @@ namespace fluid
                                                        0.0);
             std::vector<double> pressure_midpoint_abs(estimated_error_per_cell.size(), 0.0);
             std::vector<double> shell_face_variation(estimated_error_per_cell.size(), 0.0);
+            std::vector<double> time_derivative_proxy_values(estimated_error_per_cell.size(),
+                                                             0.0);
+            std::vector<double> convective_proxy_values(estimated_error_per_cell.size(),
+                                                        0.0);
+            std::vector<double> pressure_gradient_proxy_values(estimated_error_per_cell.size(),
+                                                               0.0);
+            std::vector<double> viscous_surrogate_values(estimated_error_per_cell.size(),
+                                                         0.0);
             std::vector<double> local_momentum_residual_proxy(estimated_error_per_cell.size(),
                                                               0.0);
             double velocity_speed_midpoint_max = 0.0;
@@ -1149,13 +1157,21 @@ namespace fluid
                   const double shell_variation_value =
                     shell_variation_sum /
                     static_cast<double>(GeometryInfo<dim>::faces_per_cell);
+                  const double force_sum_proxy =
+                    convective_proxy + pressure_gradient_proxy + viscous_surrogate;
+                  const double residual_balance_gap_value =
+                    std::abs(time_derivative_proxy - force_sum_proxy);
                   const double residual_surrogate_value =
-                    time_derivative_proxy + convective_proxy + pressure_gradient_proxy +
-                    viscous_surrogate;
+                    residual_balance_gap_value /
+                    (time_derivative_proxy + force_sum_proxy + 1e-12);
 
                   velocity_speed_midpoint[pressure_idx] = cell_speed_midpoint;
                   pressure_midpoint_abs[pressure_idx] = pressure_abs_value;
                   shell_face_variation[pressure_idx] = shell_variation_value;
+                  time_derivative_proxy_values[pressure_idx] = time_derivative_proxy;
+                  convective_proxy_values[pressure_idx] = convective_proxy;
+                  pressure_gradient_proxy_values[pressure_idx] = pressure_gradient_proxy;
+                  viscous_surrogate_values[pressure_idx] = viscous_surrogate;
                   local_momentum_residual_proxy[pressure_idx] = residual_surrogate_value;
                   if (cell_speed_midpoint > velocity_speed_midpoint_max)
                     velocity_speed_midpoint_max = cell_speed_midpoint;
@@ -1167,10 +1183,10 @@ namespace fluid
                     local_momentum_residual_proxy_max = residual_surrogate_value;
                 }
 
-            std::ofstream env_out("KELLY_PRESSURESHELLKINRES_LOCAL_ENVELOPE_PROXY_step" +
+            std::ofstream env_out("KELLY_PRESSURESHELLKINRESREF_LOCAL_ENVELOPE_PROXY_step" +
                                   Utilities::int_to_string(time.get_timestep(), 6) +
                                   ".csv");
-            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,kinematic_midpoint,kinematic_over_max,pressure_abs_midpoint,pressure_abs_over_max,shell_face_variation,shell_face_variation_over_max,local_momentum_residual_proxy,local_momentum_residual_over_max,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
+            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,kinematic_midpoint,kinematic_over_max,pressure_abs_midpoint,pressure_abs_over_max,shell_face_variation,shell_face_variation_over_max,time_derivative_proxy,convective_proxy,pressure_gradient_proxy,viscous_surrogate,local_momentum_residual_proxy,local_momentum_residual_over_max,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
 
             unsigned int idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1206,6 +1222,14 @@ namespace fluid
                   const double local_pressure_proxy = pressure_abs_over_max;
                   const double local_shell_interface_proxy =
                     shell_face_variation_over_max;
+                  const double time_derivative_proxy_value =
+                    time_derivative_proxy_values[idx];
+                  const double convective_proxy_value =
+                    convective_proxy_values[idx];
+                  const double pressure_gradient_proxy_value =
+                    pressure_gradient_proxy_values[idx];
+                  const double viscous_surrogate_value =
+                    viscous_surrogate_values[idx];
                   const double local_momentum_residual_proxy_value =
                     local_momentum_residual_proxy[idx];
                   const double local_momentum_residual_over_max =
@@ -1242,13 +1266,17 @@ namespace fluid
                           << pressure_abs_over_max << ","
                           << shell_face_variation_value << ","
                           << shell_face_variation_over_max << ","
+                          << time_derivative_proxy_value << ","
+                          << convective_proxy_value << ","
+                          << pressure_gradient_proxy_value << ","
+                          << viscous_surrogate_value << ","
                           << local_momentum_residual_proxy_value << ","
                           << local_momentum_residual_over_max << ","
                           << local_envelope_total_proxy << ","
                           << 5 << ","
                           << 4 << ","
-                          << "\"residual_augmented_multichannel_local_proxy\"" << ","
-                          << "\"theorem-facing fork launch; Kelly spine plus solver-sourced kinematic midpoint, pressure midpoint, face-shell variation, and midpoint residual surrogate channels; residual column is a solver-sourced local momentum surrogate built from increment-over-dt, convective, pressure-gradient, and viscous-surrogate terms; divergence and commutator channels not yet exported\"\n";
+                          << ""residual_refined_multichannel_local_proxy"" << ","
+                          << ""last justified theorem-facing build; residual column refined into normalized momentum-balance gap using increment-over-dt versus convective+pressure-gradient+viscous activity; decomposition columns exported explicitly for audit; divergence and commutator channels not yet exported"\n";
                 }
 
             output_results(time.get_timestep());
