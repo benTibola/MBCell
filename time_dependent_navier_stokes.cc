@@ -1275,8 +1275,8 @@ namespace fluid
                           << local_envelope_total_proxy << ","
                           << 5 << ","
                           << 4 << ","
-                          << ""residual_refined_multichannel_local_proxy"" << ","
-                          << ""last justified theorem-facing build; residual column refined into normalized momentum-balance gap using increment-over-dt versus convective+pressure-gradient+viscous activity; decomposition columns exported explicitly for audit; divergence and commutator channels not yet exported"\n";
+                          << "residual_refined_multichannel_local_proxy" << ","
+                          << "last justified theorem-facing build; residual column refined into normalized momentum-balance gap using increment-over-dt versus convective+pressure-gradient+viscous activity; decomposition columns exported explicitly for audit; divergence and commutator channels not yet exported\n";
                 }
 
             output_results(time.get_timestep());
