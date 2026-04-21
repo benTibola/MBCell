@@ -1081,7 +1081,9 @@ namespace fluid
 
             QMidpoint<dim> midpoint_quad;
             QMidpoint<dim - 1> face_midpoint_quad;
-            FEValues<dim> midpoint_values(fe, midpoint_quad, update_values);
+            FEValues<dim> midpoint_values(fe,
+                                          midpoint_quad,
+                                          update_values | update_gradients);
             FEFaceValues<dim> face_midpoint_values(fe,
                                                    face_midpoint_quad,
                                                    update_values);
@@ -1090,9 +1092,12 @@ namespace fluid
                                                        0.0);
             std::vector<double> pressure_midpoint_abs(estimated_error_per_cell.size(), 0.0);
             std::vector<double> shell_face_variation(estimated_error_per_cell.size(), 0.0);
+            std::vector<double> local_momentum_residual_proxy(estimated_error_per_cell.size(),
+                                                              0.0);
             double velocity_speed_midpoint_max = 0.0;
             double pressure_midpoint_abs_max   = 0.0;
             double shell_face_variation_max    = 0.0;
+            double local_momentum_residual_proxy_max = 0.0;
 
             unsigned int pressure_idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1102,12 +1107,34 @@ namespace fluid
                   midpoint_values.reinit(cell);
                   std::vector<double> pressure_values(1, 0.0);
                   std::vector<Tensor<1, dim>> cell_velocity_values(1);
+                  std::vector<Tensor<2, dim>> cell_velocity_gradients(1);
+                  std::vector<Tensor<1, dim>> pressure_gradients(1);
+                  std::vector<Tensor<1, dim>> increment_velocity_values(1);
                   midpoint_values[pressure].get_function_values(present_solution,
                                                                 pressure_values);
+                  midpoint_values[pressure].get_function_gradients(present_solution,
+                                                                   pressure_gradients);
                   midpoint_values[velocity].get_function_values(present_solution,
                                                                 cell_velocity_values);
+                  midpoint_values[velocity].get_function_gradients(present_solution,
+                                                                   cell_velocity_gradients);
+                  midpoint_values[velocity].get_function_values(solution_increment,
+                                                                increment_velocity_values);
                   const double pressure_abs_value = std::abs(pressure_values[0]);
                   const double cell_speed_midpoint = cell_velocity_values[0].norm();
+                  const double dt_value = time.get_delta_t();
+                  const double increment_speed = increment_velocity_values[0].norm();
+                  const double time_derivative_proxy =
+                    (dt_value > 0.0 ? increment_speed / dt_value : 0.0);
+                  const Tensor<1, dim> convective_tensor =
+                    cell_velocity_gradients[0] * cell_velocity_values[0];
+                  const double convective_proxy = convective_tensor.norm();
+                  const double pressure_gradient_proxy = pressure_gradients[0].norm();
+                  const double velocity_gradient_frobenius =
+                    cell_velocity_gradients[0].norm();
+                  const double diameter = cell->diameter();
+                  const double viscous_surrogate =
+                    (diameter > 0.0 ? viscosity * velocity_gradient_frobenius / diameter : 0.0);
                   double shell_variation_sum = 0.0;
                   for (unsigned int f = 0; f < GeometryInfo<dim>::faces_per_cell; ++f)
                     {
@@ -1122,22 +1149,28 @@ namespace fluid
                   const double shell_variation_value =
                     shell_variation_sum /
                     static_cast<double>(GeometryInfo<dim>::faces_per_cell);
+                  const double residual_surrogate_value =
+                    time_derivative_proxy + convective_proxy + pressure_gradient_proxy +
+                    viscous_surrogate;
 
                   velocity_speed_midpoint[pressure_idx] = cell_speed_midpoint;
                   pressure_midpoint_abs[pressure_idx] = pressure_abs_value;
-                  shell_face_variation[pressure_idx]  = shell_variation_value;
+                  shell_face_variation[pressure_idx] = shell_variation_value;
+                  local_momentum_residual_proxy[pressure_idx] = residual_surrogate_value;
                   if (cell_speed_midpoint > velocity_speed_midpoint_max)
                     velocity_speed_midpoint_max = cell_speed_midpoint;
                   if (pressure_abs_value > pressure_midpoint_abs_max)
                     pressure_midpoint_abs_max = pressure_abs_value;
                   if (shell_variation_value > shell_face_variation_max)
                     shell_face_variation_max = shell_variation_value;
+                  if (residual_surrogate_value > local_momentum_residual_proxy_max)
+                    local_momentum_residual_proxy_max = residual_surrogate_value;
                 }
 
-            std::ofstream env_out("KELLY_PRESSURESHELLKIN_LOCAL_ENVELOPE_PROXY_step" +
+            std::ofstream env_out("KELLY_PRESSURESHELLKINRES_LOCAL_ENVELOPE_PROXY_step" +
                                   Utilities::int_to_string(time.get_timestep(), 6) +
                                   ".csv");
-            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,velocity_speed_midpoint,velocity_speed_over_max,pressure_abs_midpoint,pressure_abs_over_max,shell_face_variation,shell_face_variation_over_max,local_kinematic_proxy,local_pressure_proxy,local_shell_interface_proxy,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
+            env_out << "cell_index,kelly_indicator,cell_center_x,cell_center_y,cell_level,boundary_touch_flag,kelly_over_max,kelly_over_mean,kinematic_midpoint,kinematic_over_max,pressure_abs_midpoint,pressure_abs_over_max,shell_face_variation,shell_face_variation_over_max,local_momentum_residual_proxy,local_momentum_residual_over_max,local_envelope_total_proxy,channel_count,independent_channel_count,export_grade,envelope_note\n";
 
             unsigned int idx = 0;
             for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
@@ -1169,15 +1202,24 @@ namespace fluid
                        shell_face_variation_value / shell_face_variation_max :
                        0.0);
 
-                  const double local_kinematic_proxy        = velocity_speed_over_max;
-                  const double local_pressure_proxy         = pressure_abs_over_max;
-                  const double local_shell_interface_proxy   =
+                  const double local_kinematic_proxy = velocity_speed_over_max;
+                  const double local_pressure_proxy = pressure_abs_over_max;
+                  const double local_shell_interface_proxy =
                     shell_face_variation_over_max;
+                  const double local_momentum_residual_proxy_value =
+                    local_momentum_residual_proxy[idx];
+                  const double local_momentum_residual_over_max =
+                    (local_momentum_residual_proxy_max > 0.0 ?
+                       local_momentum_residual_proxy_value /
+                         local_momentum_residual_proxy_max :
+                       0.0);
                   const double kelly_core_proxy =
                     0.5 * (kelly_over_max + kelly_over_mean);
                   const double local_envelope_total_proxy =
                     std::max(std::max(kelly_core_proxy, local_kinematic_proxy),
-                             std::max(local_pressure_proxy, local_shell_interface_proxy));
+                             std::max(std::max(local_pressure_proxy,
+                                               local_shell_interface_proxy),
+                                      local_momentum_residual_over_max));
 
                   kelly_out << idx << ","
                             << kelly_value << ","
@@ -1200,14 +1242,13 @@ namespace fluid
                           << pressure_abs_over_max << ","
                           << shell_face_variation_value << ","
                           << shell_face_variation_over_max << ","
-                          << local_kinematic_proxy << ","
-                          << local_pressure_proxy << ","
-                          << local_shell_interface_proxy << ","
+                          << local_momentum_residual_proxy_value << ","
+                          << local_momentum_residual_over_max << ","
                           << local_envelope_total_proxy << ","
+                          << 5 << ","
                           << 4 << ","
-                          << 3 << ","
-                          << "\"consolidated_pressure_shell_kinematic_multichannel_local_proxy\"" << ","
-                          << "\"consolidated local export; Kelly spine plus solver-sourced kinematic midpoint, pressure midpoint, and face-shell variation channels; true local momentum residual, divergence, and commutator channels not yet exported\"\n";
+                          << "\"residual_augmented_multichannel_local_proxy\"" << ","
+                          << "\"theorem-facing fork launch; Kelly spine plus solver-sourced kinematic midpoint, pressure midpoint, face-shell variation, and midpoint residual surrogate channels; residual column is a solver-sourced local momentum surrogate built from increment-over-dt, convective, pressure-gradient, and viscous-surrogate terms; divergence and commutator channels not yet exported\"\n";
                 }
 
             output_results(time.get_timestep());
